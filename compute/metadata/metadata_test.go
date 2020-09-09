@@ -17,6 +17,7 @@ package metadata
 import (
 	"bytes"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"os"
 	"sync"
@@ -58,6 +59,54 @@ func TestOverrideUserAgent(t *testing.T) {
 	if got, want := rt.gotUserAgent, userAgent; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
+}
+
+func TestGetFailsOnBadURL(t *testing.T) {
+	c := NewClient(http.DefaultClient)
+	old := os.Getenv(metadataHostEnv)
+	defer os.Setenv(metadataHostEnv, old)
+	os.Setenv(metadataHostEnv, "host:-1")
+	_, err := c.Get("suffix")
+	log.Printf("%v", err)
+	if err == nil {
+		t.Errorf("got %v, want non-nil error", err)
+	}
+}
+
+func TestGet_LeadingSlash(t *testing.T) {
+	want := "http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/identity?audience=http://example.com"
+	tests := []struct {
+		name   string
+		suffix string
+	}{
+		{
+			name:   "without leading slash",
+			suffix: "instance/service-accounts/default/identity?audience=http://example.com",
+		},
+		{
+			name:   "with leading slash",
+			suffix: "/instance/service-accounts/default/identity?audience=http://example.com",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ct := &captureTransport{}
+			c := NewClient(&http.Client{Transport: ct})
+			c.Get(tc.suffix)
+			if ct.url != want {
+				t.Fatalf("got %v, want %v", ct.url, want)
+			}
+		})
+	}
+}
+
+type captureTransport struct {
+	url string
+}
+
+func (ct *captureTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	ct.url = req.URL.String()
+	return &http.Response{Body: ioutil.NopCloser(bytes.NewReader(nil))}, nil
 }
 
 type userAgentTransport struct {

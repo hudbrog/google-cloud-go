@@ -43,6 +43,56 @@ type Resource struct {
 	Name string `json:"name"`
 	// Type is the type of event.
 	Type string `json:"type"`
+	// Path is the path to the resource type (deprecated).
+	// This is the case for some deprecated GCS
+	// notifications, which populate the resource field as a string containing the topic
+	// rather than as the expected dictionary.
+	// See the Attributes section of https://cloud.google.com/storage/docs/pubsub-notifications
+	// for more details.
+	RawPath string `json:"-"`
+}
+
+// UnmarshalJSON specializes the Resource unmarshalling to handle the case where the
+// value is a string instead of a map. See the comment above on RawPath for why this
+// needs to be handled.
+func (r *Resource) UnmarshalJSON(data []byte) error {
+	// Try to unmarshal the resource into a string.
+	var path string
+	if err := json.Unmarshal(data, &path); err == nil {
+		r.RawPath = path
+		return nil
+	}
+
+	// Otherwise, accept whatever the result of the normal unmarshal would be.
+	// Need to define a new type, otherwise it infinitely recurses and panics.
+	type resource Resource
+	var res resource
+	if err := json.Unmarshal(data, &res); err != nil {
+		return err
+	}
+
+	r.Service = res.Service
+	r.Name = res.Name
+	r.Type = res.Type
+	return nil
+}
+
+// MarshalJSON specializes the Resource marshalling to handle the case where the
+// value is a string instead of a map. See the comment above on RawPath for why this
+// needs to be handled.
+func (r *Resource) MarshalJSON() ([]byte, error) {
+	// If RawPath is set, use that as the whole value.
+	if r.RawPath != "" {
+		return []byte(fmt.Sprintf("%q", r.RawPath)), nil
+	}
+
+	// Otherwise, accept whatever the result of the normal marshal would be.
+	res := *r
+	b, err := json.Marshal(res)
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
 }
 
 type contextKey string

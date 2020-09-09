@@ -29,8 +29,8 @@ import (
 // A Statement is a SQL query with named parameters.
 //
 // A parameter placeholder consists of '@' followed by the parameter name.
-// Parameter names consist of any combination of letters, numbers, and
-// underscores. Names may be entirely numeric (e.g., "WHERE m.id = @5").
+// The parameter name is an identifier which must conform to the naming
+// requirements in https://cloud.google.com/spanner/docs/lexical#identifiers.
 // Parameters may appear anywhere that a literal value is expected. The same
 // parameter name may be used more than once.  It is an error to execute a
 // statement with unbound parameters. On the other hand, it is allowable to
@@ -78,13 +78,14 @@ func (s *Statement) convertParams() (*structpb.Struct, map[string]*sppb.Type, er
 	return params, paramTypes, nil
 }
 
-// errBindParam returns error for not being able to bind parameter to query request.
+// errBindParam returns error for not being able to bind parameter to query
+// request.
 func errBindParam(k string, v interface{}, err error) error {
 	if err == nil {
 		return nil
 	}
-	se, ok := toSpannerError(err).(*Error)
-	if !ok {
+	var se *Error
+	if !errorAs(err, &se) {
 		return spannerErrorf(codes.InvalidArgument, "failed to bind query parameter(name: %q, value: %v), error = <%v>", k, v, err)
 	}
 	se.decorate(fmt.Sprintf("failed to bind query parameter(name: %q, value: %v)", k, v))

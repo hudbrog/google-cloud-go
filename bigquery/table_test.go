@@ -25,6 +25,8 @@ import (
 func TestBQToTableMetadata(t *testing.T) {
 	aTime := time.Date(2017, 1, 26, 0, 0, 0, 0, time.Local)
 	aTimeMillis := aTime.UnixNano() / 1e6
+	aDurationMillis := int64(1800000)
+	aDuration := time.Duration(aDurationMillis) * time.Millisecond
 	for _, test := range []struct {
 		in   *bq.Table
 		want *TableMetadata
@@ -48,6 +50,12 @@ func TestBQToTableMetadata(t *testing.T) {
 					EstimatedRows:   3,
 					OldestEntryTime: uint64(aTimeMillis),
 				},
+				MaterializedView: &bq.MaterializedViewDefinition{
+					EnableRefresh:     true,
+					Query:             "mat view query",
+					LastRefreshTime:   aTimeMillis,
+					RefreshIntervalMs: aDurationMillis,
+				},
 				TimePartitioning: &bq.TimePartitioning{
 					ExpirationMs: 7890,
 					Type:         "DAY",
@@ -56,6 +64,7 @@ func TestBQToTableMetadata(t *testing.T) {
 				Clustering: &bq.Clustering{
 					Fields: []string{"cfield1", "cfield2"},
 				},
+				RequirePartitionFilter:  true,
 				EncryptionConfiguration: &bq.EncryptionConfiguration{KmsKeyName: "keyName"},
 				Type:                    "EXTERNAL",
 				View:                    &bq.ViewDefinition{Query: "view-query"},
@@ -67,6 +76,7 @@ func TestBQToTableMetadata(t *testing.T) {
 			&TableMetadata{
 				Description:        "desc",
 				Name:               "fname",
+				Location:           "loc",
 				ViewQuery:          "view-query",
 				FullID:             "id",
 				Type:               ExternalTable,
@@ -78,13 +88,21 @@ func TestBQToTableMetadata(t *testing.T) {
 				NumBytes:           123,
 				NumLongTermBytes:   23,
 				NumRows:            7,
+				MaterializedView: &MaterializedViewDefinition{
+					EnableRefresh:   true,
+					Query:           "mat view query",
+					LastRefreshTime: aTime,
+					RefreshInterval: aDuration,
+				},
 				TimePartitioning: &TimePartitioning{
+					Type:       DayPartitioningType,
 					Expiration: 7890 * time.Millisecond,
 					Field:      "pfield",
 				},
 				Clustering: &Clustering{
 					Fields: []string{"cfield1", "cfield2"},
 				},
+				RequirePartitionFilter: true,
 				StreamingBuffer: &StreamingBuffer{
 					EstimatedBytes:  11,
 					EstimatedRows:   3,
@@ -108,7 +126,7 @@ func TestBQToTableMetadata(t *testing.T) {
 func TestTableMetadataToBQ(t *testing.T) {
 	aTime := time.Date(2017, 1, 26, 0, 0, 0, 0, time.Local)
 	aTimeMillis := aTime.UnixNano() / 1e6
-	sc := Schema{fieldSchema("desc", "name", "STRING", false, true)}
+	sc := Schema{fieldSchema("desc", "name", "STRING", false, true, nil)}
 
 	for _, test := range []struct {
 		in   *TableMetadata
@@ -131,7 +149,7 @@ func TestTableMetadataToBQ(t *testing.T) {
 				Description:  "d",
 				Schema: &bq.TableSchema{
 					Fields: []*bq.TableFieldSchema{
-						bqTableFieldSchema("desc", "name", "STRING", "REQUIRED"),
+						bqTableFieldSchema("desc", "name", "STRING", "REQUIRED", nil),
 					},
 				},
 				ExpirationTime:            aTimeMillis,
@@ -152,9 +170,10 @@ func TestTableMetadataToBQ(t *testing.T) {
 		},
 		{
 			&TableMetadata{
-				ViewQuery:        "q",
-				UseLegacySQL:     true,
-				TimePartitioning: &TimePartitioning{},
+				ViewQuery:              "q",
+				UseLegacySQL:           true,
+				TimePartitioning:       &TimePartitioning{},
+				RequirePartitionFilter: true,
 			},
 			&bq.Table{
 				View: &bq.ViewDefinition{
@@ -165,6 +184,7 @@ func TestTableMetadataToBQ(t *testing.T) {
 					Type:         "DAY",
 					ExpirationMs: 0,
 				},
+				RequirePartitionFilter: true,
 			},
 		},
 		{
@@ -172,6 +192,7 @@ func TestTableMetadataToBQ(t *testing.T) {
 				ViewQuery:      "q",
 				UseStandardSQL: true,
 				TimePartitioning: &TimePartitioning{
+					Type:       HourPartitioningType,
 					Expiration: time.Second,
 					Field:      "ofDreams",
 				},
@@ -186,9 +207,39 @@ func TestTableMetadataToBQ(t *testing.T) {
 					ForceSendFields: []string{"UseLegacySql"},
 				},
 				TimePartitioning: &bq.TimePartitioning{
-					Type:         "DAY",
+					Type:         "HOUR",
 					ExpirationMs: 1000,
 					Field:        "ofDreams",
+				},
+				Clustering: &bq.Clustering{
+					Fields: []string{"cfield1"},
+				},
+			},
+		},
+		{
+			&TableMetadata{
+				RangePartitioning: &RangePartitioning{
+					Field: "ofNumbers",
+					Range: &RangePartitioningRange{
+						Start:    1,
+						End:      100,
+						Interval: 5,
+					},
+				},
+				Clustering: &Clustering{
+					Fields: []string{"cfield1"},
+				},
+			},
+			&bq.Table{
+
+				RangePartitioning: &bq.RangePartitioning{
+					Field: "ofNumbers",
+					Range: &bq.RangePartitioningRange{
+						Start:           1,
+						End:             100,
+						Interval:        5,
+						ForceSendFields: []string{"Start", "End", "Interval"},
+					},
 				},
 				Clustering: &bq.Clustering{
 					Fields: []string{"cfield1"},
@@ -259,13 +310,13 @@ func TestTableMetadataToUpdateToBQ(t *testing.T) {
 		},
 		{
 			tm: TableMetadataToUpdate{
-				Schema:         Schema{fieldSchema("desc", "name", "STRING", false, true)},
+				Schema:         Schema{fieldSchema("desc", "name", "STRING", false, true, nil)},
 				ExpirationTime: aTime,
 			},
 			want: &bq.Table{
 				Schema: &bq.TableSchema{
 					Fields: []*bq.TableFieldSchema{
-						bqTableFieldSchema("desc", "name", "STRING", "REQUIRED"),
+						bqTableFieldSchema("desc", "name", "STRING", "REQUIRED", nil),
 					},
 				},
 				ExpirationTime:  aTime.UnixNano() / 1e6,
@@ -332,6 +383,20 @@ func TestTableMetadataToUpdateToBQ(t *testing.T) {
 					Type:            "DAY",
 					ForceSendFields: []string{"RequirePartitionFilter"},
 				},
+			},
+		},
+		{
+			tm: TableMetadataToUpdate{RequirePartitionFilter: false},
+			want: &bq.Table{
+				RequirePartitionFilter: false,
+				ForceSendFields:        []string{"RequirePartitionFilter"},
+			},
+		},
+		{
+			tm: TableMetadataToUpdate{RequirePartitionFilter: true},
+			want: &bq.Table{
+				RequirePartitionFilter: true,
+				ForceSendFields:        []string{"RequirePartitionFilter"},
 			},
 		},
 	} {

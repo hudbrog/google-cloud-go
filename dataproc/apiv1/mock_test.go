@@ -17,13 +17,6 @@
 package dataproc
 
 import (
-	emptypb "github.com/golang/protobuf/ptypes/empty"
-	dataprocpb "google.golang.org/genproto/googleapis/cloud/dataproc/v1"
-	longrunningpb "google.golang.org/genproto/googleapis/longrunning"
-	field_maskpb "google.golang.org/genproto/protobuf/field_mask"
-)
-
-import (
 	"context"
 	"flag"
 	"fmt"
@@ -36,11 +29,17 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
+	emptypb "github.com/golang/protobuf/ptypes/empty"
 	"google.golang.org/api/option"
+	dataprocpb "google.golang.org/genproto/googleapis/cloud/dataproc/v1"
+	longrunningpb "google.golang.org/genproto/googleapis/longrunning"
+	field_maskpb "google.golang.org/genproto/protobuf/field_mask"
+
 	status "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+
 	gstatus "google.golang.org/grpc/status"
 )
 
@@ -790,7 +789,7 @@ func TestClusterControllerListClustersError(t *testing.T) {
 	_ = resp
 }
 func TestClusterControllerDiagnoseCluster(t *testing.T) {
-	var expectedResponse *emptypb.Empty = &emptypb.Empty{}
+	var expectedResponse *dataprocpb.DiagnoseClusterResults = &dataprocpb.DiagnoseClusterResults{}
 
 	mockClusterController.err = nil
 	mockClusterController.reqs = nil
@@ -823,7 +822,7 @@ func TestClusterControllerDiagnoseCluster(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = respLRO.Wait(context.Background())
+	_, err = respLRO.Wait(context.Background())
 
 	if err != nil {
 		t.Fatal(err)
@@ -867,7 +866,7 @@ func TestClusterControllerDiagnoseClusterError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = respLRO.Wait(context.Background())
+	_, err = respLRO.Wait(context.Background())
 
 	if st, ok := gstatus.FromError(err); !ok {
 		t.Errorf("got error %v, expected grpc error", err)

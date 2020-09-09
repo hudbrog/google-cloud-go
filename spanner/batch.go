@@ -108,11 +108,11 @@ func (t *BatchReadOnlyTransaction) PartitionReadUsingIndex(ctx context.Context, 
 		partitions []*Partition
 	)
 	kset, err = keys.keySetProto()
-	// request Partitions
+	// Request partitions.
 	if err != nil {
 		return nil, err
 	}
-	resp, err = client.PartitionRead(ctx, &sppb.PartitionReadRequest{
+	resp, err = client.PartitionRead(contextWithOutgoingMetadata(ctx, sh.getMetadata()), &sppb.PartitionReadRequest{
 		Session:          sid,
 		Transaction:      ts,
 		Table:            table,
@@ -121,7 +121,7 @@ func (t *BatchReadOnlyTransaction) PartitionReadUsingIndex(ctx context.Context, 
 		KeySet:           kset,
 		PartitionOptions: opt.toProto(),
 	})
-	// prepare ReadRequest
+	// Prepare ReadRequest.
 	req := &sppb.ReadRequest{
 		Session:     sid,
 		Transaction: ts,
@@ -130,7 +130,7 @@ func (t *BatchReadOnlyTransaction) PartitionReadUsingIndex(ctx context.Context, 
 		Columns:     columns,
 		KeySet:      kset,
 	}
-	// generate Partitions
+	// Generate partitions.
 	for _, p := range resp.GetPartitions() {
 		partitions = append(partitions, &Partition{
 			pt:   p.PartitionToken,
@@ -140,8 +140,20 @@ func (t *BatchReadOnlyTransaction) PartitionReadUsingIndex(ctx context.Context, 
 	return partitions, err
 }
 
-// PartitionQuery returns a list of Partitions that can be used to execute a query against the database.
+// PartitionQuery returns a list of Partitions that can be used to execute a
+// query against the database.
 func (t *BatchReadOnlyTransaction) PartitionQuery(ctx context.Context, statement Statement, opt PartitionOptions) ([]*Partition, error) {
+	return t.partitionQuery(ctx, statement, opt, t.ReadOnlyTransaction.txReadOnly.qo)
+}
+
+// PartitionQueryWithOptions returns a list of Partitions that can be used to
+// execute a query against the database. The sql query execution will be
+// optimized based on the given query options.
+func (t *BatchReadOnlyTransaction) PartitionQueryWithOptions(ctx context.Context, statement Statement, opt PartitionOptions, qOpts QueryOptions) ([]*Partition, error) {
+	return t.partitionQuery(ctx, statement, opt, t.ReadOnlyTransaction.txReadOnly.qo.merge(qOpts))
+}
+
+func (t *BatchReadOnlyTransaction) partitionQuery(ctx context.Context, statement Statement, opt PartitionOptions, qOpts QueryOptions) ([]*Partition, error) {
 	sh, ts, err := t.acquire(ctx)
 	if err != nil {
 		return nil, err
@@ -161,15 +173,16 @@ func (t *BatchReadOnlyTransaction) PartitionQuery(ctx context.Context, statement
 		Params:           params,
 		ParamTypes:       paramTypes,
 	}
-	resp, err := client.PartitionQuery(ctx, req)
+	resp, err := client.PartitionQuery(contextWithOutgoingMetadata(ctx, sh.getMetadata()), req)
 
 	// prepare ExecuteSqlRequest
 	r := &sppb.ExecuteSqlRequest{
-		Session:     sid,
-		Transaction: ts,
-		Sql:         statement.SQL,
-		Params:      params,
-		ParamTypes:  paramTypes,
+		Session:      sid,
+		Transaction:  ts,
+		Sql:          statement.SQL,
+		Params:       params,
+		ParamTypes:   paramTypes,
+		QueryOptions: qOpts.Options,
 	}
 
 	// generate Partitions
@@ -188,7 +201,9 @@ func (t *BatchReadOnlyTransaction) release(err error) {
 }
 
 // setTimestamp implements txReadEnv.setTimestamp, noop.
-// read timestamp is ready on txn initialization, avoid contending writing to it with future partitions.
+//
+// read timestamp is ready on txn initialization, avoid contending writing to it
+// with future partitions.
 func (t *BatchReadOnlyTransaction) setTimestamp(ts time.Time) {
 }
 
@@ -205,8 +220,8 @@ func (t *BatchReadOnlyTransaction) Close() {
 // transaction was shared.
 //
 // Calling Cleanup is optional, but recommended. If Cleanup is not called, the
-// transaction's resources will be freed when the session expires on the backend and
-// is deleted. For more information about recycled sessions, see
+// transaction's resources will be freed when the session expires on the backend
+// and is deleted. For more information about recycled sessions, see
 // https://cloud.google.com/spanner/docs/sessions.
 func (t *BatchReadOnlyTransaction) Cleanup(ctx context.Context) {
 	t.Close()
@@ -218,16 +233,18 @@ func (t *BatchReadOnlyTransaction) Cleanup(ctx context.Context) {
 	}
 	t.sh = nil
 	sid, client := sh.getID(), sh.getClient()
-	err := runRetryable(ctx, func(ctx context.Context) error {
-		_, e := client.DeleteSession(ctx, &sppb.DeleteSessionRequest{Name: sid})
-		return e
-	})
+	err := client.DeleteSession(contextWithOutgoingMetadata(ctx, sh.getMetadata()), &sppb.DeleteSessionRequest{Name: sid})
 	if err != nil {
-		log.Printf("Failed to delete session %v. Error: %v", sid, err)
+		var logger *log.Logger
+		if sh.session != nil {
+			logger = sh.session.logger
+		}
+		logf(logger, "Failed to delete session %v. Error: %v", sid, err)
 	}
 }
 
-// Execute runs a single Partition obtained from PartitionRead or PartitionQuery.
+// Execute runs a single Partition obtained from PartitionRead or
+// PartitionQuery.
 func (t *BatchReadOnlyTransaction) Execute(ctx context.Context, p *Partition) *RowIterator {
 	var (
 		sh  *sessionHandle
@@ -242,22 +259,37 @@ func (t *BatchReadOnlyTransaction) Execute(ctx context.Context, p *Partition) *R
 		// Might happen if transaction is closed in the middle of a API call.
 		return &RowIterator{err: errSessionClosed(sh)}
 	}
-	// read or query partition
+	// Read or query partition.
 	if p.rreq != nil {
-		p.rreq.PartitionToken = p.pt
 		rpc = func(ctx context.Context, resumeToken []byte) (streamingReceiver, error) {
-			p.rreq.ResumeToken = resumeToken
-			return client.StreamingRead(ctx, p.rreq)
+			return client.StreamingRead(ctx, &sppb.ReadRequest{
+				Session:        p.rreq.Session,
+				Transaction:    p.rreq.Transaction,
+				Table:          p.rreq.Table,
+				Index:          p.rreq.Index,
+				Columns:        p.rreq.Columns,
+				KeySet:         p.rreq.KeySet,
+				PartitionToken: p.pt,
+				ResumeToken:    resumeToken,
+			})
 		}
 	} else {
-		p.qreq.PartitionToken = p.pt
 		rpc = func(ctx context.Context, resumeToken []byte) (streamingReceiver, error) {
-			p.qreq.ResumeToken = resumeToken
-			return client.ExecuteStreamingSql(ctx, p.qreq)
+			return client.ExecuteStreamingSql(ctx, &sppb.ExecuteSqlRequest{
+				Session:        p.qreq.Session,
+				Transaction:    p.qreq.Transaction,
+				Sql:            p.qreq.Sql,
+				Params:         p.qreq.Params,
+				ParamTypes:     p.qreq.ParamTypes,
+				QueryOptions:   p.qreq.QueryOptions,
+				PartitionToken: p.pt,
+				ResumeToken:    resumeToken,
+			})
 		}
 	}
 	return stream(
 		contextWithOutgoingMetadata(ctx, sh.getMetadata()),
+		sh.session.logger,
 		rpc,
 		t.setTimestamp,
 		t.release)

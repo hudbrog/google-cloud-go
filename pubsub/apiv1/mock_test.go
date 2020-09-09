@@ -1,4 +1,4 @@
-// Copyright 2019 Google LLC
+// Copyright 2020 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,13 +17,6 @@
 package pubsub
 
 import (
-	emptypb "github.com/golang/protobuf/ptypes/empty"
-	timestamppb "github.com/golang/protobuf/ptypes/timestamp"
-	pubsubpb "google.golang.org/genproto/googleapis/pubsub/v1"
-	field_maskpb "google.golang.org/genproto/protobuf/field_mask"
-)
-
-import (
 	"context"
 	"flag"
 	"fmt"
@@ -36,11 +29,17 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/golang/protobuf/ptypes"
+	emptypb "github.com/golang/protobuf/ptypes/empty"
+	timestamppb "github.com/golang/protobuf/ptypes/timestamp"
 	"google.golang.org/api/option"
+	pubsubpb "google.golang.org/genproto/googleapis/pubsub/v1"
+	field_maskpb "google.golang.org/genproto/protobuf/field_mask"
+
 	status "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+
 	gstatus "google.golang.org/grpc/status"
 )
 
@@ -388,8 +387,10 @@ func TestMain(m *testing.M) {
 
 func TestPublisherCreateTopic(t *testing.T) {
 	var name2 string = "name2-1052831874"
+	var kmsKeyName string = "kmsKeyName2094986649"
 	var expectedResponse = &pubsubpb.Topic{
-		Name: name2,
+		Name:       name2,
+		KmsKeyName: kmsKeyName,
 	}
 
 	mockPublisher.err = nil
@@ -447,8 +448,10 @@ func TestPublisherCreateTopicError(t *testing.T) {
 }
 func TestPublisherUpdateTopic(t *testing.T) {
 	var name string = "name3373707"
+	var kmsKeyName string = "kmsKeyName2094986649"
 	var expectedResponse = &pubsubpb.Topic{
-		Name: name,
+		Name:       name,
+		KmsKeyName: kmsKeyName,
 	}
 
 	mockPublisher.err = nil
@@ -582,8 +585,10 @@ func TestPublisherPublishError(t *testing.T) {
 }
 func TestPublisherGetTopic(t *testing.T) {
 	var name string = "name3373707"
+	var kmsKeyName string = "kmsKeyName2094986649"
 	var expectedResponse = &pubsubpb.Topic{
-		Name: name,
+		Name:       name,
+		KmsKeyName: kmsKeyName,
 	}
 
 	mockPublisher.err = nil

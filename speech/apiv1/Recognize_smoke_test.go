@@ -17,10 +17,6 @@
 package speech
 
 import (
-	speechpb "google.golang.org/genproto/googleapis/cloud/speech/v1"
-)
-
-import (
 	"context"
 	"fmt"
 	"strconv"
@@ -30,6 +26,7 @@ import (
 	"cloud.google.com/go/internal/testutil"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
+	speechpb "google.golang.org/genproto/googleapis/cloud/speech/v1"
 )
 
 var _ = fmt.Sprintf
@@ -59,11 +56,12 @@ func TestSpeechSmoke(t *testing.T) {
 	var sampleRateHertz int32 = 44100
 	var encoding speechpb.RecognitionConfig_AudioEncoding = speechpb.RecognitionConfig_FLAC
 	var config = &speechpb.RecognitionConfig{
-		LanguageCode:    languageCode,
-		SampleRateHertz: sampleRateHertz,
-		Encoding:        encoding,
+		LanguageCode:      languageCode,
+		SampleRateHertz:   sampleRateHertz,
+		Encoding:          encoding,
+		AudioChannelCount: 2,
 	}
-	var uri string = "gs://gapic-toolkit/hello.flac"
+	var uri string = "gs://cloud-samples-data/speech/hello.flac"
 	var audio = &speechpb.RecognitionAudio{
 		AudioSource: &speechpb.RecognitionAudio_Uri{
 			Uri: uri,

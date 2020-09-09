@@ -15,6 +15,7 @@
 package pubsub
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"testing"
@@ -23,6 +24,7 @@ import (
 	"cloud.google.com/go/internal/testutil"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
+	"google.golang.org/api/support/bundler"
 	pubsubpb "google.golang.org/genproto/googleapis/pubsub/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -66,7 +68,32 @@ func TestTopicID(t *testing.T) {
 
 	s := c.Topic(id)
 	if got, want := s.ID(), id; got != want {
-		t.Errorf("Token.ID() = %q; want %q", got, want)
+		t.Errorf("Topic.ID() = %q; want %q", got, want)
+	}
+}
+
+func TestCreateTopicWithConfig(t *testing.T) {
+	c, srv := newFake(t)
+	defer c.Close()
+	defer srv.Close()
+
+	id := "test-topic"
+	want := TopicConfig{
+		Labels: map[string]string{"label": "value"},
+		MessageStoragePolicy: MessageStoragePolicy{
+			AllowedPersistenceRegions: []string{"us-east1"},
+		},
+		KMSKeyName: "projects/P/locations/L/keyRings/R/cryptoKeys/K",
+	}
+
+	topic := mustCreateTopicWithConfig(t, c, id, &want)
+	got, err := topic.Config(context.Background())
+	if err != nil {
+		t.Fatalf("error getting topic config: %v", err)
+	}
+
+	if !testutil.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
 	}
 }
 
@@ -113,11 +140,13 @@ func TestPublishTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	pubsubpb.RegisterPublisherServer(serv.Gsrv, &alwaysFailPublish{})
+	serv.Start()
 	conn, err := grpc.Dial(serv.Addr, grpc.WithInsecure())
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := NewClient(ctx, "projectID", option.WithGRPCConn(conn))
+	opts := withGRPCHeadersAssertion(t, option.WithGRPCConn(conn))
+	c, err := NewClient(ctx, "projectID", opts...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +165,30 @@ func TestPublishTimeout(t *testing.T) {
 	}
 }
 
-func TestUpdateTopic(t *testing.T) {
+func TestPublishBufferedByteLimit(t *testing.T) {
+	ctx := context.Background()
+	client, srv := newFake(t)
+	defer client.Close()
+	defer srv.Close()
+
+	topic := mustCreateTopic(t, client, "topic-small-buffered-byte-limit")
+	defer topic.Stop()
+
+	// Test setting BufferedByteLimit to small number of bytes that should fail.
+	topic.PublishSettings.BufferedByteLimit = 100
+
+	const messageSizeBytes = 1000
+
+	msg := &Message{Data: bytes.Repeat([]byte{'A'}, int(messageSizeBytes))}
+	res := topic.Publish(ctx, msg)
+
+	_, err := res.Get(ctx)
+	if err != bundler.ErrOverflow {
+		t.Errorf("got %v, want ErrOverflow", err)
+	}
+}
+
+func TestUpdateTopic_Label(t *testing.T) {
 	ctx := context.Background()
 	client, srv := newFake(t)
 	defer client.Close()
@@ -154,13 +206,14 @@ func TestUpdateTopic(t *testing.T) {
 
 	// replace labels
 	labels := map[string]string{"label": "value"}
-	config2, err := topic.Update(ctx, TopicConfigToUpdate{Labels: labels})
+	config2, err := topic.Update(ctx, TopicConfigToUpdate{
+		Labels: labels,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	want = TopicConfig{
-		Labels:               labels,
-		MessageStoragePolicy: MessageStoragePolicy{[]string{"US"}},
+		Labels: labels,
 	}
 	if !testutil.Equal(config2, want) {
 		t.Errorf("got %+v, want %+v", config2, want)
@@ -178,6 +231,38 @@ func TestUpdateTopic(t *testing.T) {
 	}
 }
 
+func TestUpdateTopic_MessageStoragePolicy(t *testing.T) {
+	ctx := context.Background()
+	client, srv := newFake(t)
+	defer client.Close()
+	defer srv.Close()
+
+	topic := mustCreateTopic(t, client, "T")
+	config, err := topic.Config(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := TopicConfig{}
+	if !testutil.Equal(config, want) {
+		t.Errorf("\ngot  %+v\nwant %+v", config, want)
+	}
+
+	// Update message storage policy.
+	msp := &MessageStoragePolicy{
+		AllowedPersistenceRegions: []string{"us-east1"},
+	}
+	config2, err := topic.Update(ctx, TopicConfigToUpdate{MessageStoragePolicy: msp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want.MessageStoragePolicy = MessageStoragePolicy{
+		AllowedPersistenceRegions: []string{"us-east1"},
+	}
+	if !testutil.Equal(config2, want) {
+		t.Errorf("\ngot  %+v\nwant %+v", config2, want)
+	}
+}
+
 type alwaysFailPublish struct {
 	pubsubpb.PublisherServer
 }
@@ -192,4 +277,33 @@ func mustCreateTopic(t *testing.T, c *Client, id string) *Topic {
 		t.Fatal(err)
 	}
 	return topic
+}
+
+func mustCreateTopicWithConfig(t *testing.T, c *Client, id string, tc *TopicConfig) *Topic {
+	if tc == nil {
+		return mustCreateTopic(t, c, id)
+	}
+	topic, err := c.CreateTopicWithConfig(context.Background(), id, tc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return topic
+}
+
+func TestDetachSubscription(t *testing.T) {
+	ctx := context.Background()
+	c, srv := newFake(t)
+	defer c.Close()
+	defer srv.Close()
+
+	topic, err := c.CreateTopic(ctx, "some-topic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.CreateSubscription(ctx, "some-sub", SubscriptionConfig{
+		Topic: topic,
+	})
+	if _, err := c.DetachSubscription(ctx, "projects/P/subscriptions/some-sub"); err != nil {
+		t.Errorf("DetachSubscription failed: %v", err)
+	}
 }

@@ -61,22 +61,26 @@ func NewClient(ctx context.Context, projectID string, opts ...option.ClientOptio
 			return nil, fmt.Errorf("grpc.Dial: %v", err)
 		}
 		o = []option.ClientOption{option.WithGRPCConn(conn)}
+		o = append(o, option.WithTelemetryDisabled())
 	} else {
+		numConns := runtime.GOMAXPROCS(0)
+		if numConns > 4 {
+			numConns = 4
+		}
 		o = []option.ClientOption{
 			// Create multiple connections to increase throughput.
-			option.WithGRPCConnectionPool(runtime.GOMAXPROCS(0)),
+			option.WithGRPCConnectionPool(numConns),
 			option.WithGRPCDialOption(grpc.WithKeepaliveParams(keepalive.ClientParameters{
 				Time: 5 * time.Minute,
 			})),
 		}
-		o = append(o, openCensusOptions()...)
 	}
 	o = append(o, opts...)
 	pubc, err := vkit.NewPublisherClient(ctx, o...)
 	if err != nil {
 		return nil, fmt.Errorf("pubsub: %v", err)
 	}
-	subc, err := vkit.NewSubscriberClient(ctx, option.WithGRPCConn(pubc.Connection()))
+	subc, err := vkit.NewSubscriberClient(ctx, o...)
 	if err != nil {
 		// Should never happen, since we are passing in the connection.
 		// If it does, we cannot close, because the user may have passed in their
@@ -84,7 +88,6 @@ func NewClient(ctx context.Context, projectID string, opts ...option.ClientOptio
 		return nil, fmt.Errorf("pubsub: %v", err)
 	}
 	pubc.SetGoogleClientInfo("gccl", version.Repo)
-	subc.SetGoogleClientInfo("gccl", version.Repo)
 	return &Client{
 		projectID: projectID,
 		pubc:      pubc,
