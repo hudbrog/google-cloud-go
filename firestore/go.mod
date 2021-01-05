@@ -3,12 +3,12 @@ module cloud.google.com/go/firestore
 go 1.11
 
 require (
-	cloud.google.com/go v0.65.0
-	github.com/golang/protobuf v1.4.2
-	github.com/google/go-cmp v0.5.2
+	cloud.google.com/go v0.74.0
+	github.com/golang/protobuf v1.4.3
+	github.com/google/go-cmp v0.5.4
 	github.com/googleapis/gax-go/v2 v2.0.5
-	golang.org/x/tools v0.0.0-20200917221617-d56e4e40bc9d // indirect
-	google.golang.org/api v0.32.0
-	google.golang.org/genproto v0.0.0-20200918140846-d0d605568037
-	google.golang.org/grpc v1.32.0
+	golang.org/x/tools v0.0.0-20201211025543-abf6a1d87e11 // indirect
+	google.golang.org/api v0.36.0
+	google.golang.org/genproto v0.0.0-20201211151036-40ec1c210f7a
+	google.golang.org/grpc v1.34.0
 )
