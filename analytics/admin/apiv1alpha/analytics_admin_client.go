@@ -1,4 +1,4 @@
-// Copyright 2020 Google LLC
+// Copyright 2021 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -68,12 +68,10 @@ type AnalyticsAdminCallOptions struct {
 	GetIosAppDataStream               []gax.CallOption
 	DeleteIosAppDataStream            []gax.CallOption
 	UpdateIosAppDataStream            []gax.CallOption
-	CreateIosAppDataStream            []gax.CallOption
 	ListIosAppDataStreams             []gax.CallOption
 	GetAndroidAppDataStream           []gax.CallOption
 	DeleteAndroidAppDataStream        []gax.CallOption
 	UpdateAndroidAppDataStream        []gax.CallOption
-	CreateAndroidAppDataStream        []gax.CallOption
 	ListAndroidAppDataStreams         []gax.CallOption
 	GetEnhancedMeasurementSettings    []gax.CallOption
 	UpdateEnhancedMeasurementSettings []gax.CallOption
@@ -87,6 +85,7 @@ type AnalyticsAdminCallOptions struct {
 	DeleteGoogleAdsLink               []gax.CallOption
 	ListGoogleAdsLinks                []gax.CallOption
 	GetDataSharingSettings            []gax.CallOption
+	SearchChangeHistoryEvents         []gax.CallOption
 }
 
 func defaultAnalyticsAdminClientOptions() []option.ClientOption {
@@ -154,12 +153,10 @@ func defaultAnalyticsAdminCallOptions() *AnalyticsAdminCallOptions {
 		GetIosAppDataStream:               []gax.CallOption{},
 		DeleteIosAppDataStream:            []gax.CallOption{},
 		UpdateIosAppDataStream:            []gax.CallOption{},
-		CreateIosAppDataStream:            []gax.CallOption{},
 		ListIosAppDataStreams:             []gax.CallOption{},
 		GetAndroidAppDataStream:           []gax.CallOption{},
 		DeleteAndroidAppDataStream:        []gax.CallOption{},
 		UpdateAndroidAppDataStream:        []gax.CallOption{},
-		CreateAndroidAppDataStream:        []gax.CallOption{},
 		ListAndroidAppDataStreams:         []gax.CallOption{},
 		GetEnhancedMeasurementSettings:    []gax.CallOption{},
 		UpdateEnhancedMeasurementSettings: []gax.CallOption{},
@@ -184,10 +181,22 @@ func defaultAnalyticsAdminCallOptions() *AnalyticsAdminCallOptions {
 				})
 			}),
 		},
+		SearchChangeHistoryEvents: []gax.CallOption{
+			gax.WithRetry(func() gax.Retryer {
+				return gax.OnCodes([]codes.Code{
+					codes.Unavailable,
+					codes.Unknown,
+				}, gax.Backoff{
+					Initial:    1000 * time.Millisecond,
+					Max:        60000 * time.Millisecond,
+					Multiplier: 1.30,
+				})
+			}),
+		},
 	}
 }
 
-// AnalyticsAdminClient is a client for interacting with .
+// AnalyticsAdminClient is a client for interacting with Google Analytics Admin API.
 //
 // Methods, except Close, may be called concurrently. However, fields must not be modified concurrently with method calls.
 type AnalyticsAdminClient struct {
@@ -265,8 +274,6 @@ func (c *AnalyticsAdminClient) setGoogleClientInfo(keyval ...string) {
 }
 
 // GetAccount lookup for a single Account.
-// Throws “Target not found” if no such account found, or if caller does not
-// have permissions to access it.
 func (c *AnalyticsAdminClient) GetAccount(ctx context.Context, req *adminpb.GetAccountRequest, opts ...gax.CallOption) (*adminpb.Account, error) {
 	if _, ok := ctx.Deadline(); !ok && !c.disableDeadlines {
 		cctx, cancel := context.WithTimeout(ctx, 60000*time.Millisecond)
@@ -444,9 +451,6 @@ func (c *AnalyticsAdminClient) ListAccountSummaries(ctx context.Context, req *ad
 }
 
 // GetProperty lookup for a single “GA4” Property.
-//
-// Throws “Target not found” if no such property found, if property is not
-// of the type “GA4”, or if caller does not have permissions to access it.
 func (c *AnalyticsAdminClient) GetProperty(ctx context.Context, req *adminpb.GetPropertyRequest, opts ...gax.CallOption) (*adminpb.Property, error) {
 	if _, ok := ctx.Deadline(); !ok && !c.disableDeadlines {
 		cctx, cancel := context.WithTimeout(ctx, 60000*time.Millisecond)
@@ -545,7 +549,7 @@ func (c *AnalyticsAdminClient) CreateProperty(ctx context.Context, req *adminpb.
 // https://support.google.com/analytics/answer/6154772 (at https://support.google.com/analytics/answer/6154772)
 //
 // Returns an error if the target is not found, or is not an GA4 Property.
-func (c *AnalyticsAdminClient) DeleteProperty(ctx context.Context, req *adminpb.DeletePropertyRequest, opts ...gax.CallOption) error {
+func (c *AnalyticsAdminClient) DeleteProperty(ctx context.Context, req *adminpb.DeletePropertyRequest, opts ...gax.CallOption) (*adminpb.Property, error) {
 	if _, ok := ctx.Deadline(); !ok && !c.disableDeadlines {
 		cctx, cancel := context.WithTimeout(ctx, 60000*time.Millisecond)
 		defer cancel()
@@ -554,12 +558,16 @@ func (c *AnalyticsAdminClient) DeleteProperty(ctx context.Context, req *adminpb.
 	md := metadata.Pairs("x-goog-request-params", fmt.Sprintf("%s=%v", "name", url.QueryEscape(req.GetName())))
 	ctx = insertMetadata(ctx, c.xGoogMetadata, md)
 	opts = append(c.CallOptions.DeleteProperty[0:len(c.CallOptions.DeleteProperty):len(c.CallOptions.DeleteProperty)], opts...)
+	var resp *adminpb.Property
 	err := gax.Invoke(ctx, func(ctx context.Context, settings gax.CallSettings) error {
 		var err error
-		_, err = c.analyticsAdminClient.DeleteProperty(ctx, req, settings.GRPC...)
+		resp, err = c.analyticsAdminClient.DeleteProperty(ctx, req, settings.GRPC...)
 		return err
 	}, opts...)
-	return err
+	if err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 // UpdateProperty updates a property.
@@ -850,9 +858,6 @@ func (c *AnalyticsAdminClient) BatchDeleteUserLinks(ctx context.Context, req *ad
 }
 
 // GetWebDataStream lookup for a single WebDataStream
-//
-// Throws “Target not found” if no such web data stream found, or if the
-// caller does not have permissions to access it.
 func (c *AnalyticsAdminClient) GetWebDataStream(ctx context.Context, req *adminpb.GetWebDataStreamRequest, opts ...gax.CallOption) (*adminpb.WebDataStream, error) {
 	if _, ok := ctx.Deadline(); !ok && !c.disableDeadlines {
 		cctx, cancel := context.WithTimeout(ctx, 60000*time.Millisecond)
@@ -981,9 +986,6 @@ func (c *AnalyticsAdminClient) ListWebDataStreams(ctx context.Context, req *admi
 }
 
 // GetIosAppDataStream lookup for a single IosAppDataStream
-//
-// Throws “Target not found” if no such iOS app data stream found, or if the
-// caller does not have permissions to access it.
 func (c *AnalyticsAdminClient) GetIosAppDataStream(ctx context.Context, req *adminpb.GetIosAppDataStreamRequest, opts ...gax.CallOption) (*adminpb.IosAppDataStream, error) {
 	if _, ok := ctx.Deadline(); !ok && !c.disableDeadlines {
 		cctx, cancel := context.WithTimeout(ctx, 60000*time.Millisecond)
@@ -1045,28 +1047,6 @@ func (c *AnalyticsAdminClient) UpdateIosAppDataStream(ctx context.Context, req *
 	return resp, nil
 }
 
-// CreateIosAppDataStream creates an iOS app data stream with the specified location and attributes.
-func (c *AnalyticsAdminClient) CreateIosAppDataStream(ctx context.Context, req *adminpb.CreateIosAppDataStreamRequest, opts ...gax.CallOption) (*adminpb.IosAppDataStream, error) {
-	if _, ok := ctx.Deadline(); !ok && !c.disableDeadlines {
-		cctx, cancel := context.WithTimeout(ctx, 60000*time.Millisecond)
-		defer cancel()
-		ctx = cctx
-	}
-	md := metadata.Pairs("x-goog-request-params", fmt.Sprintf("%s=%v", "parent", url.QueryEscape(req.GetParent())))
-	ctx = insertMetadata(ctx, c.xGoogMetadata, md)
-	opts = append(c.CallOptions.CreateIosAppDataStream[0:len(c.CallOptions.CreateIosAppDataStream):len(c.CallOptions.CreateIosAppDataStream)], opts...)
-	var resp *adminpb.IosAppDataStream
-	err := gax.Invoke(ctx, func(ctx context.Context, settings gax.CallSettings) error {
-		var err error
-		resp, err = c.analyticsAdminClient.CreateIosAppDataStream(ctx, req, settings.GRPC...)
-		return err
-	}, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return resp, nil
-}
-
 // ListIosAppDataStreams returns child iOS app data streams under the specified parent property.
 //
 // iOS app data streams will be excluded if the caller does not have access.
@@ -1112,9 +1092,6 @@ func (c *AnalyticsAdminClient) ListIosAppDataStreams(ctx context.Context, req *a
 }
 
 // GetAndroidAppDataStream lookup for a single AndroidAppDataStream
-//
-// Throws “Target not found” if no such android app data stream found, or if
-// the caller does not have permissions to access it.
 func (c *AnalyticsAdminClient) GetAndroidAppDataStream(ctx context.Context, req *adminpb.GetAndroidAppDataStreamRequest, opts ...gax.CallOption) (*adminpb.AndroidAppDataStream, error) {
 	if _, ok := ctx.Deadline(); !ok && !c.disableDeadlines {
 		cctx, cancel := context.WithTimeout(ctx, 60000*time.Millisecond)
@@ -1168,28 +1145,6 @@ func (c *AnalyticsAdminClient) UpdateAndroidAppDataStream(ctx context.Context, r
 	err := gax.Invoke(ctx, func(ctx context.Context, settings gax.CallSettings) error {
 		var err error
 		resp, err = c.analyticsAdminClient.UpdateAndroidAppDataStream(ctx, req, settings.GRPC...)
-		return err
-	}, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return resp, nil
-}
-
-// CreateAndroidAppDataStream creates an android app stream with the specified location and attributes.
-func (c *AnalyticsAdminClient) CreateAndroidAppDataStream(ctx context.Context, req *adminpb.CreateAndroidAppDataStreamRequest, opts ...gax.CallOption) (*adminpb.AndroidAppDataStream, error) {
-	if _, ok := ctx.Deadline(); !ok && !c.disableDeadlines {
-		cctx, cancel := context.WithTimeout(ctx, 60000*time.Millisecond)
-		defer cancel()
-		ctx = cctx
-	}
-	md := metadata.Pairs("x-goog-request-params", fmt.Sprintf("%s=%v", "parent", url.QueryEscape(req.GetParent())))
-	ctx = insertMetadata(ctx, c.xGoogMetadata, md)
-	opts = append(c.CallOptions.CreateAndroidAppDataStream[0:len(c.CallOptions.CreateAndroidAppDataStream):len(c.CallOptions.CreateAndroidAppDataStream)], opts...)
-	var resp *adminpb.AndroidAppDataStream
-	err := gax.Invoke(ctx, func(ctx context.Context, settings gax.CallSettings) error {
-		var err error
-		resp, err = c.analyticsAdminClient.CreateAndroidAppDataStream(ctx, req, settings.GRPC...)
 		return err
 	}, opts...)
 	if err != nil {
@@ -1356,25 +1311,44 @@ func (c *AnalyticsAdminClient) DeleteFirebaseLink(ctx context.Context, req *admi
 
 // ListFirebaseLinks lists FirebaseLinks on a property.
 // Properties can have at most one FirebaseLink.
-func (c *AnalyticsAdminClient) ListFirebaseLinks(ctx context.Context, req *adminpb.ListFirebaseLinksRequest, opts ...gax.CallOption) (*adminpb.ListFirebaseLinksResponse, error) {
-	if _, ok := ctx.Deadline(); !ok && !c.disableDeadlines {
-		cctx, cancel := context.WithTimeout(ctx, 60000*time.Millisecond)
-		defer cancel()
-		ctx = cctx
-	}
+func (c *AnalyticsAdminClient) ListFirebaseLinks(ctx context.Context, req *adminpb.ListFirebaseLinksRequest, opts ...gax.CallOption) *FirebaseLinkIterator {
 	md := metadata.Pairs("x-goog-request-params", fmt.Sprintf("%s=%v", "parent", url.QueryEscape(req.GetParent())))
 	ctx = insertMetadata(ctx, c.xGoogMetadata, md)
 	opts = append(c.CallOptions.ListFirebaseLinks[0:len(c.CallOptions.ListFirebaseLinks):len(c.CallOptions.ListFirebaseLinks)], opts...)
-	var resp *adminpb.ListFirebaseLinksResponse
-	err := gax.Invoke(ctx, func(ctx context.Context, settings gax.CallSettings) error {
-		var err error
-		resp, err = c.analyticsAdminClient.ListFirebaseLinks(ctx, req, settings.GRPC...)
-		return err
-	}, opts...)
-	if err != nil {
-		return nil, err
+	it := &FirebaseLinkIterator{}
+	req = proto.Clone(req).(*adminpb.ListFirebaseLinksRequest)
+	it.InternalFetch = func(pageSize int, pageToken string) ([]*adminpb.FirebaseLink, string, error) {
+		var resp *adminpb.ListFirebaseLinksResponse
+		req.PageToken = pageToken
+		if pageSize > math.MaxInt32 {
+			req.PageSize = math.MaxInt32
+		} else {
+			req.PageSize = int32(pageSize)
+		}
+		err := gax.Invoke(ctx, func(ctx context.Context, settings gax.CallSettings) error {
+			var err error
+			resp, err = c.analyticsAdminClient.ListFirebaseLinks(ctx, req, settings.GRPC...)
+			return err
+		}, opts...)
+		if err != nil {
+			return nil, "", err
+		}
+
+		it.Response = resp
+		return resp.GetFirebaseLinks(), resp.GetNextPageToken(), nil
 	}
-	return resp, nil
+	fetch := func(pageSize int, pageToken string) (string, error) {
+		items, nextPageToken, err := it.InternalFetch(pageSize, pageToken)
+		if err != nil {
+			return "", err
+		}
+		it.items = append(it.items, items...)
+		return nextPageToken, nil
+	}
+	it.pageInfo, it.nextFunc = iterator.NewPageInfo(fetch, it.bufLen, it.takeBuf)
+	it.pageInfo.MaxSize = int(req.GetPageSize())
+	it.pageInfo.Token = req.GetPageToken()
+	return it
 }
 
 // GetGlobalSiteTag returns the Site Tag for the specified web stream.
@@ -1524,6 +1498,48 @@ func (c *AnalyticsAdminClient) GetDataSharingSettings(ctx context.Context, req *
 		return nil, err
 	}
 	return resp, nil
+}
+
+// SearchChangeHistoryEvents searches through all changes to an account or its children given the
+// specified set of filters.
+func (c *AnalyticsAdminClient) SearchChangeHistoryEvents(ctx context.Context, req *adminpb.SearchChangeHistoryEventsRequest, opts ...gax.CallOption) *ChangeHistoryEventIterator {
+	md := metadata.Pairs("x-goog-request-params", fmt.Sprintf("%s=%v", "account", url.QueryEscape(req.GetAccount())))
+	ctx = insertMetadata(ctx, c.xGoogMetadata, md)
+	opts = append(c.CallOptions.SearchChangeHistoryEvents[0:len(c.CallOptions.SearchChangeHistoryEvents):len(c.CallOptions.SearchChangeHistoryEvents)], opts...)
+	it := &ChangeHistoryEventIterator{}
+	req = proto.Clone(req).(*adminpb.SearchChangeHistoryEventsRequest)
+	it.InternalFetch = func(pageSize int, pageToken string) ([]*adminpb.ChangeHistoryEvent, string, error) {
+		var resp *adminpb.SearchChangeHistoryEventsResponse
+		req.PageToken = pageToken
+		if pageSize > math.MaxInt32 {
+			req.PageSize = math.MaxInt32
+		} else {
+			req.PageSize = int32(pageSize)
+		}
+		err := gax.Invoke(ctx, func(ctx context.Context, settings gax.CallSettings) error {
+			var err error
+			resp, err = c.analyticsAdminClient.SearchChangeHistoryEvents(ctx, req, settings.GRPC...)
+			return err
+		}, opts...)
+		if err != nil {
+			return nil, "", err
+		}
+
+		it.Response = resp
+		return resp.GetChangeHistoryEvents(), resp.GetNextPageToken(), nil
+	}
+	fetch := func(pageSize int, pageToken string) (string, error) {
+		items, nextPageToken, err := it.InternalFetch(pageSize, pageToken)
+		if err != nil {
+			return "", err
+		}
+		it.items = append(it.items, items...)
+		return nextPageToken, nil
+	}
+	it.pageInfo, it.nextFunc = iterator.NewPageInfo(fetch, it.bufLen, it.takeBuf)
+	it.pageInfo.MaxSize = int(req.GetPageSize())
+	it.pageInfo.Token = req.GetPageToken()
+	return it
 }
 
 // AccountIterator manages a stream of *adminpb.Account.
@@ -1709,6 +1725,100 @@ func (it *AuditUserLinkIterator) bufLen() int {
 }
 
 func (it *AuditUserLinkIterator) takeBuf() interface{} {
+	b := it.items
+	it.items = nil
+	return b
+}
+
+// ChangeHistoryEventIterator manages a stream of *adminpb.ChangeHistoryEvent.
+type ChangeHistoryEventIterator struct {
+	items    []*adminpb.ChangeHistoryEvent
+	pageInfo *iterator.PageInfo
+	nextFunc func() error
+
+	// Response is the raw response for the current page.
+	// It must be cast to the RPC response type.
+	// Calling Next() or InternalFetch() updates this value.
+	Response interface{}
+
+	// InternalFetch is for use by the Google Cloud Libraries only.
+	// It is not part of the stable interface of this package.
+	//
+	// InternalFetch returns results from a single call to the underlying RPC.
+	// The number of results is no greater than pageSize.
+	// If there are no more results, nextPageToken is empty and err is nil.
+	InternalFetch func(pageSize int, pageToken string) (results []*adminpb.ChangeHistoryEvent, nextPageToken string, err error)
+}
+
+// PageInfo supports pagination. See the google.golang.org/api/iterator package for details.
+func (it *ChangeHistoryEventIterator) PageInfo() *iterator.PageInfo {
+	return it.pageInfo
+}
+
+// Next returns the next result. Its second return value is iterator.Done if there are no more
+// results. Once Next returns Done, all subsequent calls will return Done.
+func (it *ChangeHistoryEventIterator) Next() (*adminpb.ChangeHistoryEvent, error) {
+	var item *adminpb.ChangeHistoryEvent
+	if err := it.nextFunc(); err != nil {
+		return item, err
+	}
+	item = it.items[0]
+	it.items = it.items[1:]
+	return item, nil
+}
+
+func (it *ChangeHistoryEventIterator) bufLen() int {
+	return len(it.items)
+}
+
+func (it *ChangeHistoryEventIterator) takeBuf() interface{} {
+	b := it.items
+	it.items = nil
+	return b
+}
+
+// FirebaseLinkIterator manages a stream of *adminpb.FirebaseLink.
+type FirebaseLinkIterator struct {
+	items    []*adminpb.FirebaseLink
+	pageInfo *iterator.PageInfo
+	nextFunc func() error
+
+	// Response is the raw response for the current page.
+	// It must be cast to the RPC response type.
+	// Calling Next() or InternalFetch() updates this value.
+	Response interface{}
+
+	// InternalFetch is for use by the Google Cloud Libraries only.
+	// It is not part of the stable interface of this package.
+	//
+	// InternalFetch returns results from a single call to the underlying RPC.
+	// The number of results is no greater than pageSize.
+	// If there are no more results, nextPageToken is empty and err is nil.
+	InternalFetch func(pageSize int, pageToken string) (results []*adminpb.FirebaseLink, nextPageToken string, err error)
+}
+
+// PageInfo supports pagination. See the google.golang.org/api/iterator package for details.
+func (it *FirebaseLinkIterator) PageInfo() *iterator.PageInfo {
+	return it.pageInfo
+}
+
+// Next returns the next result. Its second return value is iterator.Done if there are no more
+// results. Once Next returns Done, all subsequent calls will return Done.
+func (it *FirebaseLinkIterator) Next() (*adminpb.FirebaseLink, error) {
+	var item *adminpb.FirebaseLink
+	if err := it.nextFunc(); err != nil {
+		return item, err
+	}
+	item = it.items[0]
+	it.items = it.items[1:]
+	return item, nil
+}
+
+func (it *FirebaseLinkIterator) bufLen() int {
+	return len(it.items)
+}
+
+func (it *FirebaseLinkIterator) takeBuf() interface{} {
 	b := it.items
 	it.items = nil
 	return b

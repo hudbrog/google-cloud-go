@@ -1,4 +1,4 @@
-// Copyright 2020 Google LLC
+// Copyright 2021 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -92,7 +92,7 @@ func defaultCursorCallOptions() *CursorCallOptions {
 	}
 }
 
-// CursorClient is a client for interacting with .
+// CursorClient is a client for interacting with Pub/Sub Lite API.
 //
 // Methods, except Close, may be called concurrently. However, fields must not be modified concurrently with method calls.
 type CursorClient struct {
@@ -194,7 +194,8 @@ func (c *CursorClient) CommitCursor(ctx context.Context, req *pubsublitepb.Commi
 		defer cancel()
 		ctx = cctx
 	}
-	ctx = insertMetadata(ctx, c.xGoogMetadata)
+	md := metadata.Pairs("x-goog-request-params", fmt.Sprintf("%s=%v", "subscription", url.QueryEscape(req.GetSubscription())))
+	ctx = insertMetadata(ctx, c.xGoogMetadata, md)
 	opts = append(c.CallOptions.CommitCursor[0:len(c.CallOptions.CommitCursor):len(c.CallOptions.CommitCursor)], opts...)
 	var resp *pubsublitepb.CommitCursorResponse
 	err := gax.Invoke(ctx, func(ctx context.Context, settings gax.CallSettings) error {
